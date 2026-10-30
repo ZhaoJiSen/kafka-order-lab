@@ -566,28 +566,35 @@ Java 已审核通过、PHP 尚未收到结果时，两边会短暂显示不同�
 
 PHP 与 Java 的数据库状态、Kafka 的消费进度需要一起看。Offset 已提交不能单独证明整个跨服务业务结束。本仓库提供教学观察能力，尚未实现生产告警、自动对账和人工补偿平台。
 
-### 8.6 Outbox 一定要定时查表吗？也可以用 CDC
+### 8.6 不想频繁查数据库，还有什么方案？
 
-本案例按条件、分批查询未发送记录，这叫**轮询发送（Polling Publisher）**，不是遍历整个数据库。轮询本身是正式的架构方案；是否合适，要看查询压力、发送延迟和维护成本。
+分享时可能会问：现在发送程序每隔一秒查询 Outbox，如果没有新消息，岂不是也要一直查？有没有其他方式？
 
-如果希望减少反复查表，可以保留“业务数据与 Outbox 一起提交”，把发送环节换成 **CDC（变更数据捕获）**：
+**有。可以保留 Outbox，把“定时查表找消息”换成“读取数据库变更日志找消息”，这类技术叫 CDC（变更数据捕获）。**
+
+数据库修改数据时，本身会记录变更日志。例如 MySQL 有 binlog，PostgreSQL 有 WAL。CDC 组件持续读取这些日志，发现 Outbox 新增的已提交事件，再把它发送到 Kafka。[事务日志读取模式](https://microservices.io/patterns/data/transaction-log-tailing.html)
 
 ```mermaid
 flowchart TD
-    A[本地事务：保存业务数据和 Outbox] --> B[数据库记录已提交的数据变更]
-    B --> C[CDC 组件读取变更日志]
-    C --> D[识别 Outbox 新事件并转换格式]
-    D --> E[发送到 Kafka]
+    A[PHP 创建订单] --> B[同一个事务：保存订单和 Outbox 消息]
+    B --> C[事务提交，变更记入数据库日志]
+    C --> D[Debezium 捕获 Outbox 新增记录]
+    D --> E[转换为事件消息，发送到 Kafka]
+    E --> F[Java 消费消息并审核订单]
 ```
 
-MySQL 的 binlog、PostgreSQL 的 WAL 可以作为这类采集的数据来源。Debezium 提供 Outbox Event Router，能把捕获到的 Outbox 事件转换成 Kafka 消息，并按配置设置 Topic、Key 和正文。它接管的是“发现并发送已保存事件”的工作，不替代业务事务，也不替代消费者幂等。[事务日志读取模式](https://microservices.io/patterns/data/transaction-log-tailing.html)、[Debezium Outbox Event Router](https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html)
+例如使用 Debezium 的 Outbox Event Router，就能把捕获到的 Outbox 记录转换成 Kafka 消息，并按配置设置 Topic、Key 和正文。**业务代码仍然负责把订单和 Outbox 一起保存，Debezium 接替定时查表的发送程序。** Java 发送审核结果时，也可以采用相同思路。[Debezium 官方说明](https://debezium.io/documentation/reference/stable/transformations/outbox-event-router.html)
 
 | 发送方式 | 怎样发现新事件 | 主要取舍 |
 | --- | --- | --- |
-| 定时查询 Outbox | 按状态批量查表 | 实现简单，有查询开销和轮询等待 |
-| 提交后唤醒＋轮询兜底 | 提交后立即通知发送，遗漏的记录由轮询补上 | 等待较少，要维护两条触发路径 |
-| Outbox＋CDC | 跟踪数据库变更日志 | 减少查表，需要维护采集组件和读取进度 |
+| 定时查询 Outbox | 定期按状态、分批查询待发送记录 | 实现简单；没有新消息时也有查询，发送需要等待下一轮 |
+| 提交后唤醒＋轮询兜底 | 事务提交后通知发送程序，定时查询补上遗漏 | 减少等待和空查询；需要维护通知与兜底两条路径 |
+| Outbox＋CDC | 持续读取数据库变更日志，捕获新事件 | 减少反复查表；需要维护采集组件和日志读取进度 |
 
-只在提交后发一个内存通知仍可能遗漏，所以第二种方案保留数据库记录和轮询兜底。CDC 也可能重复投递，仍要保留 `eventId` 和业务幂等，并监控采集延迟、日志保留与故障恢复。
+为什么第二种方案仍要定时查询？因为程序可能在“事务已提交、通知还没发出”时退出。通知用于尽快触发发送，数据库里的 Outbox 记录用于恢复，低频查询负责发现遗漏。
 
-**专业架构的关键是交接有依据、失败可恢复、状态可观察，而不是单纯消除定时任务。** 本 Demo 的 SQLite / H2 轮询方案没有直接接入 Debezium；这里介绍的是选用受支持数据库和采集组件后的演进方向。
+CDC 同样需要考虑故障恢复：组件中断后，要根据保存的日志读取进度继续处理，并确保所需日志还未被清理。恢复时仍可能重复发送，所以消费者的 `eventId` 去重和业务状态保护仍然需要保留。
+
+**定时查表并不等于扫描整张表，也不是不专业。** 本案例按条件、限制条数查询未发送记录；实际使用时应配好索引，结合查询耗时、空查询比例、消息量和延迟要求决定是否引入 CDC。CDC 减少了查表工作，也增加了需要部署和监控的组件。
+
+本 Demo 使用 SQLite / H2，目前没有接入 Debezium。上图是采用 MySQL、PostgreSQL 等受支持数据库后的演进方案，演示代码仍使用定时查表发送。
