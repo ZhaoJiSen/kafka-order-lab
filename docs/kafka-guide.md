@@ -286,6 +286,37 @@ Topic、Partition、Offset 和 Consumer Group 分别对应这条链路中的不�
 
 通知量增加后，可以为通知组再启动几个实例。同组实例会分担分区，而不同组仍独立读取。这就对应了第 2 节的两种分发方式：组内分担工作，组间各自订阅。
 
+下面假设 `order-events` 有 3 个分区。通知组启动 3 个实例，统计组只启动 1 个实例。箭头表示读取关系，消息由消费者主动拉取。
+
+```mermaid
+flowchart TB
+    subgraph T["同一个 Topic：order-events"]
+        P0["分区 0"]
+        P1["分区 1"]
+        P2["分区 2"]
+    end
+    subgraph N["通知消费组：3 个实例"]
+        A["通知实例 A"]
+        B["通知实例 B"]
+        C["通知实例 C"]
+    end
+    subgraph S["统计消费组：1 个实例"]
+        X["统计实例 X<br/>负责全部 3 个分区"]
+    end
+    P0 --> A
+    P1 --> B
+    P2 --> C
+    P0 --> X
+    P1 --> X
+    P2 --> X
+    style N fill:#eff6ff,stroke:#93c5fd
+    style S fill:#fff7ed,stroke:#fdba74
+```
+
+- **组内分担：** 通知组的 A、B、C 分别读取一个分区，共同完成通知业务。
+- **组间独立：** 统计实例 X 也读取这 3 个分区，通知组读过的消息，统计组仍能读取。
+- **进度各自保存：** 通知组处理得快，不会替统计组推进消费位置；统计组暂停，也不要求通知组一起暂停。
+
 在常规消费组的稳定分配期间，一个分区由组内一个实例负责。三个分区最多分给同组的三个实例；再增加实例，也不会让第四个实例获得额外分区。组成员变化时，分区可能重新分配，这个过程叫 Rebalance。
 
 参考：[Kafka Introduction](https://kafka.apache.org/42/getting-started/introduction/)、[Kafka Design](https://kafka.apache.org/42/design/design/)、[Topic Configs](https://kafka.apache.org/42/configuration/topic-configs/)。
