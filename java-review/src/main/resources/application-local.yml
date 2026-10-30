@@ -1,0 +1,12 @@
+# 本机运行：./dev.sh 会启用此配置；Docker 继续使用 application.yml。
+server:
+  address: 127.0.0.1
+  port: ${JAVA_PORT:18081}
+spring:
+  datasource:
+    url: jdbc:h2:file:./.local/data/reviews;DB_CLOSE_ON_EXIT=FALSE
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:127.0.0.1:19092}
+logging:
+  file:
+    name: ./.local/logs/java-review.log

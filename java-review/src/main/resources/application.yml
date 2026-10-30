@@ -1,0 +1,54 @@
+server:
+  port: 8081
+spring:
+  application:
+    name: java-order-review
+  datasource:
+    url: jdbc:h2:file:/data/reviews;DB_CLOSE_ON_EXIT=FALSE
+    username: sa
+    password: ${DEMO_DB_PASSWORD:local-demo}
+    hikari:
+      maximum-pool-size: 4
+  sql:
+    init:
+      mode: always
+  jpa:
+    # 沿用 schema.sql 和已有数据，只检查映射，不让 ORM 重建或修改表。
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  kafka:
+    bootstrap-servers: ${KAFKA_BROKERS:kafka:9092}
+    consumer:
+      group-id: demo-java-order-reviewers
+      auto-offset-reset: earliest
+      enable-auto-commit: false
+      max-poll-records: 1
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+    listener:
+      ack-mode: manual_immediate
+    producer:
+      acks: all
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      properties:
+        enable.idempotence: true
+        delivery.timeout.ms: 10000
+        request.timeout.ms: 5000
+        max.block.ms: 10000
+logging:
+  level:
+    org.apache.kafka: WARN
+    org.springframework.kafka: INFO
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+demo:
+  created-topic: demo.orders.created
+  reviewed-topic: demo.orders.reviewed

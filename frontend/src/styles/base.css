@@ -1,0 +1,4 @@
+@import "tailwindcss";
+@import "@heroui/styles";
+@theme { --font-sans: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+:root { --accent: #245e86; --accent-foreground: #fff; --radius: 0.5rem; }

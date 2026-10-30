@@ -1,0 +1,15 @@
+CREATE TABLE IF NOT EXISTS processed_events (
+ event_id VARCHAR(100) PRIMARY KEY, order_id VARCHAR(100) NOT NULL,
+ topic VARCHAR(200) NOT NULL, partition_id INT NOT NULL, offset_id BIGINT NOT NULL,
+ payload CLOB NOT NULL, processed_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS reviews (
+ order_id VARCHAR(100) PRIMARY KEY, event_id VARCHAR(100) NOT NULL,
+ status VARCHAR(30) NOT NULL, reason VARCHAR(500) NOT NULL,
+ total_cents BIGINT NOT NULL, reviewed_at TIMESTAMP NOT NULL
+);
+CREATE TABLE IF NOT EXISTS outbox_events (
+ event_id VARCHAR(100) PRIMARY KEY, order_id VARCHAR(100) NOT NULL,
+ topic VARCHAR(200) NOT NULL, payload CLOB NOT NULL, created_at TIMESTAMP NOT NULL,
+ sent_at TIMESTAMP NULL, partition_id INT NULL, offset_id BIGINT NULL
+);

@@ -1,0 +1,116 @@
+name: mq-order-lab
+x-php: &php
+  image: mq-order-lab-php:local
+  build: ./php-laravel
+  environment: &php-env
+    APP_NAME: Order MQ Lab
+    APP_ENV: local
+    APP_KEY: ${APP_KEY:?Run ./scripts/up.sh first}
+    APP_DEBUG: "false"
+    APP_URL: http://localhost:${PHP_PORT:-18080}
+    DB_CONNECTION: sqlite
+    DB_DATABASE: /data/orders.sqlite
+    CACHE_STORE: array
+    SESSION_DRIVER: file
+    QUEUE_CONNECTION: sync
+    LOG_CHANNEL: stderr
+    KAFKA_BROKERS: kafka:9092
+  volumes:
+    - php-data:/data
+  restart: unless-stopped
+services:
+  kafka:
+    image: apache/kafka:4.2.2
+    ports:
+      - "127.0.0.1:${KAFKA_PORT:-19092}:19092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,EXTERNAL://127.0.0.1:${KAFKA_PORT:-19092}
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_GROUP_INITIAL_REBALANCE_DELAY_MS: 0
+      KAFKA_NUM_PARTITIONS: 3
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "/opt/kafka/bin/kafka-topics.sh", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 5s
+      timeout: 10s
+      retries: 30
+    restart: unless-stopped
+  topics:
+    image: apache/kafka:4.2.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic demo.orders.created --partitions 3 --replication-factor 1
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic demo.orders.reviewed --partitions 3 --replication-factor 1
+    restart: "no"
+  php-init:
+    <<: *php
+    command: ["php", "artisan", "demo:prepare"]
+    restart: "no"
+  php-web:
+    <<: *php
+    ports:
+      - "127.0.0.1:${PHP_PORT:-18080}:8000"
+    depends_on:
+      php-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8000/up"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    command: ["php", "artisan", "serve", "--host=0.0.0.0", "--port=8000"]
+  php-outbox:
+    <<: *php
+    command: ["php", "artisan", "demo:publish-outbox"]
+    depends_on:
+      php-init:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+  php-results:
+    <<: *php
+    command: ["php", "artisan", "demo:consume-results"]
+    depends_on:
+      php-init:
+        condition: service_completed_successfully
+      topics:
+        condition: service_completed_successfully
+  java-review:
+    image: mq-order-lab-java:local
+    build: ./java-review
+    environment:
+      KAFKA_BROKERS: kafka:9092
+      DEMO_DB_PASSWORD: ${DEMO_DB_PASSWORD:-local-demo}
+    ports:
+      - "127.0.0.1:${JAVA_PORT:-18081}:8081"
+    volumes:
+      - java-data:/data
+    depends_on:
+      topics:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/localhost/8081; printf 'GET /actuator/health HTTP/1.0\r\n\r\n' >&3; cat <&3 | grep -q UP"]
+      interval: 5s
+      timeout: 5s
+      start_period: 20s
+      retries: 30
+    restart: unless-stopped
+volumes:
+  kafka-data:
+  php-data:
+  java-data:
