@@ -1,5 +1,10 @@
 # 消息队列与 Kafka：从概念到可靠消息传递
 
+> [!TIP]
+> **GitHub 演示仓库：[ZhaoJiSen/kafka-order-lab](https://github.com/ZhaoJiSen/kafka-order-lab)**
+>
+> 用 PHP → Kafka → Java → Kafka → PHP 观察订单流转。依赖安装、数据库初始化与启动命令见 [README](https://github.com/ZhaoJiSen/kafka-order-lab#readme)。
+
 做前端时，我们通常沿着一次 HTTP 请求理解业务：用户点击按钮，页面调用接口，后端返回结果，页面展示成功或失败。
 
 但在批量导出报表、处理上传文件、发送通知等场景中，后端可能先返回 “已受理” 的中间状态，再继续处理任务。此时，**请求成功只说明提交到了某一步，业务是否完成，还要看后续处理结果。**
@@ -586,21 +591,3 @@ MySQL 的 binlog、PostgreSQL 的 WAL 可以作为这类采集的数据来源。
 只在提交后发一个内存通知仍可能遗漏，所以第二种方案保留数据库记录和轮询兜底。CDC 也可能重复投递，仍要保留 `eventId` 和业务幂等，并监控采集延迟、日志保留与故障恢复。
 
 **专业架构的关键是交接有依据、失败可恢复、状态可观察，而不是单纯消除定时任务。** 本 Demo 的 SQLite / H2 轮询方案没有直接接入 Debezium；这里介绍的是选用受支持数据库和采集组件后的演进方向。
-
-## 9. 实际运行：Kafka 订单实验室
-
-演示仓库：[ZhaoJiSen/kafka-order-lab](https://github.com/ZhaoJiSen/kafka-order-lab)。
-
-[README 安装与启动说明](https://github.com/ZhaoJiSen/kafka-order-lab#readme)包含 PHP 8.4、rdkafka 扩展、Composer、Java 21、Maven、Node.js 24、pnpm、数据库初始化、Kafka Topic 创建和全部启动命令。PHP、Java、前端优先在本机运行，Kafka 可连接已有实例或单独使用容器。
-
-跑通后，按下面三个暂停实验观察“消息保存在哪里，恢复后谁继续执行”：
-
-| 暂停哪个程序 | 创建订单后看什么 | 恢复后看什么 |
-| --- | --- | --- |
-| PHP Outbox 发送进程 | 订单已保存，事件仍待发送 | 事件进入 Kafka，开始审核 |
-| Java 审核服务 | 创建事件已写入，订单等待审核 | Java 消费积压并发送结果 |
-| PHP 结果消费进程 | Java 已审核，PHP 仍待审核 | PHP 接收结果并更新订单 |
-
-前端还可以查看真实分区、Offset、消费进度和日志，并逐步回放已采集的步骤。教学回放不会重新发送消息或回滚数据库。重发旧事件是另一个主动实验，README 中有对应命令。
-
-代码阅读从 [PHP OrderService](https://github.com/ZhaoJiSen/kafka-order-lab/blob/main/php-laravel/app/Services/OrderService.php)、[Java ReviewService](https://github.com/ZhaoJiSen/kafka-order-lab/blob/main/java-review/src/main/java/demo/order/service/ReviewService.java) 和 [PHP ReviewResultHandler](https://github.com/ZhaoJiSen/kafka-order-lab/blob/main/php-laravel/app/Services/ReviewResultHandler.php) 开始，再看各自发送、消费入口。
